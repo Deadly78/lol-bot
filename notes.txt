@@ -1,0 +1,19 @@
+// notes
+- v3 api omits some info for public games (ex: summoner names omitted from matches api), therefore need some workarounds
+- finds matching data by comparing step3 and 4, therefore, only works in game modes with unique champs
+- stats to track
+	- hilow kda
+	- hilow kills
+	- hilow deaths
+	- hilow damage
+	- hi damage taken
+//
+1 -  get participants by summonerName 
+2 - register participants by their accountId, req sumName as param (from step1) (summonerv3)
+3 - get gameId of past 20 matches, req accountId as param(from step2)
+			- if .queue === 65, game mode is aram, pass gameId to step4
+			- store championId
+4- get match data, req gameId as param(from step3)
+		- find matching dataset by finding matching championId
+5-find and compare  relevant stats to database
+	- update db if there is a new highscore
