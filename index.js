@@ -16,14 +16,14 @@ const PORT = process.env.PORT || 3000; // req process.env.port for heroku, 3000 
 const Schema = mongoose.Schema;
 
 const StatSchema = new mongoose.Schema({
-  kills: String,
-  deaths: String,
-  assists: String,
-  kda: String,
-  totalDamageTaken: String,
-  totalDamageDealtToChampions: String,
-  longestTimeSpentLiving: String,
-  championId: String,
+  kills: { val: Number, champion: String, summoner: String },
+  deaths: { val: Number, champion: String, summoner: String },
+  assists: { val: Number, champion: String, summoner: String },
+  kda: { val: Number, champion: String, summoner: String },
+  dpm: { val: Number, champion: String, summoner: String },
+  totalDamageTaken: { val: Number, champion: String, summoner: String },
+  totalDamageDealtToChampions: { val: Number, champion: String, summoner: String },
+  longestTimeSpentLiving: { val: Number, champion: String, summoner: String }
 })
 
 const Stat = mongoose.model('Stat', StatSchema)
@@ -35,7 +35,7 @@ const Stat = mongoose.model('Stat', StatSchema)
 // get accountId by summoner name
 function accountId(sumName) {
   return new Promise((resolve, reject) => {
-    return axios.get(`https://na1.api.riotgames.com/lol/summoner/v3/summoners/by-name/${sumName}?api_key=${riotKey}`).then((data) => {
+    axios.get(`https://na1.api.riotgames.com/lol/summoner/v3/summoners/by-name/${sumName}?api_key=${riotKey}`).then((data) => {
       console.log('fetching accID');
       resolve(data.data.accountId);
     })
@@ -46,7 +46,7 @@ function accountId(sumName) {
 function matchHistory(accountId) {
   return new Promise((resolve, reject) => {
     let aramGameId = [];
-    return axios.get(`https://na1.api.riotgames.com/lol/match/v3/matchlists/by-account/${accountId}/recent?api_key=${riotKey}`).then((data) => {
+    axios.get(`https://na1.api.riotgames.com/lol/match/v3/matchlists/by-account/${accountId}/recent?api_key=${riotKey}`).then((data) => {
       console.log('fetching match history');
       let games = data.data.matches;
       games.map((game) => {
@@ -76,7 +76,7 @@ const matchStatConfig = {
 
 let matchStat = function(gameData) {
     return new Promise((resolve, reject) => {
-      return axios.get(`https://na1.api.riotgames.com/lol/match/v3/matches/${gameData.gameId}?api_key=${riotKey}`, matchStatConfig).then((data) => {
+      axios.get(`https://na1.api.riotgames.com/lol/match/v3/matches/${gameData.gameId}?api_key=${riotKey}`, matchStatConfig).then((data) => {
         // find participant by matching championId
         console.log(gameData);
         let matchedData = data.data.participants.find((participant) => {
@@ -101,6 +101,29 @@ let matchStat = function(gameData) {
   }
   // matchStat({ gameId: '2523061524', championId: '238' });
 
+function convertChampionId(stat) {
+  // need error handling for when id is already converted
+  console.log(stat);
+  stat = stat.toJSON(); // weird bug with mongoose objs, would otherwise output $__, isNew, and errors, as props
+  function updateToName(props, id) {
+      return axios.get(`https://na1.api.riotgames.com/lol/static-data/v3/champions/${id}?locale=en_US&api_key=${riotKey}`).then((data) => {
+        console.log(stat[props].champion);
+        stat[props].champion = data.data.name;
+        return stat;
+    }).catch((err) => {
+      console.log('already converted id to name'); // wont need this err handling when I add arr of gameid that are parsed already
+    })
+  }
+  return new Promise((resolve, reject) => {
+    let promiseArr = [];
+    for (props in stat){
+      promiseArr.push(updateToName(props, stat[props].champion))
+    }
+    Promise.all(promiseArr).then((updatedStat) => {
+      resolve(updatedStat[0]); // each promise in the array is passed its result to .then, possible cleanup to code, but works as is
+    })
+  })
+}
 
 //************************************** 
 // DISCORD JS // 
@@ -117,7 +140,13 @@ client.on('message', message => {
     case '!stats':
       // get all collections, excludes _id and __v
       Stat.find({}, { _id: 0, __v: 0 }, (err, stat) => {
-        message.reply(stat);
+        let msg = ``;
+        stat = stat[0].toJSON();
+        for (props in stat){
+          console.log(props);
+          msg += `\n **${props}**: ${stat[props].val} as ${stat[props].champion} by ${stat[props].summoner}`;
+        }
+        message.reply(msg);
       })
   }
 });
@@ -130,61 +159,61 @@ db.once('open', () => {
   // test
   // db.collections.stats.drop();
   // Stat({
-  //   kills: '0',
-  //   deaths: '0',
-  //   assists: '0',
-  //   kda: '0',
-  //   dpm:'0',
-  //   totalDamageTaken: '0',
-  //   totalDamageDealtToChampions: '0',
-  //   longestTimeSpentLiving: '0',
-  //   championId: '0',
+  //   kills: { val: 0, champion: '', summoner: '' },
+  //   deaths: { val: 0, champion: '', summoner: '' },
+  //   assists: { val: 0, champion: '', summoner: '' },
+  //   kda: { val: 0, champion: '', summoner: '' },
+  //   totalDamageTaken: { val: 0, champion: '', summoner: '' },
+  //   totalDamageDealtToChampions: { val: 0, champion: '', summoner: '' },
+  //   longestTimeSpentLiving: { val: 0, champion: '', summoner: '' }
   // }).save()
   server.listen(PORT, () => {
     console.log(`Listening on port ${PORT}`);
   });
 });
-//---------------------- M A I N ----------------------------------// 
 
-// get current stats from db to compare with new stats
-(function main(accountName) {
-  Stat.find({}, { _id: 0, __v: 0 }, (err, stat) => {
-    let currentStat = stat[0];
-    console.log(currentStat);
-    // fetch new stats from api
-    accountId(accountName).then(matchHistory).then((res) => {
-      let arr = []; // stores gameData (gameid and champid) to be resolved as promises
-      /* works in production when rate limit not an issue
-      res.forEach((gameData) => {
-        arr.push(matchStat(gameData))
-      })
-      */
-      // for dev only, limit testing to 5 match stats!!!
+//
+function getHighScore(gameId) {
+  return new Promise((resolve, reject) => {
+    Stat.find({}, { _id: 0, __v: 0 }, (err, stat) => {
+      let currentStat = stat[0];
+      let arr = [];
       for (let i = 0; i < 5; i++) {
-        arr.push(matchStat(res[i]));
+        arr.push(matchStat(gameId[i]));
       }
-      // 
-      // fetch matchStat for each gameId
+      // get matchStat for each gameId and updates current stats with any new highscores
       Promise.all(arr).then((res) => {
         console.log(res);
         let newStat;
         // iterate array of stat collection
         res.forEach((stat) => {
             // iterate through each stat we're tracking, and find the highest for each
-            for (props in stat) {
-              console.log(`comparing ${stat[props]} and ${currentStat[props]}`);
-              if (stat[props] > currentStat[props]) {
-                currentStat[props] = stat[props]
+            for (let props in stat) {
+              // console.log(`comparing ${stat[props]} and ${currentStat[props].val}`);
+              if (props !== 'championId' && stat[props] > currentStat[props].val) {
+                // update val, champion, and summoner of new highest score
+                currentStat[props].val = stat[props]
+                currentStat[props].champion = stat.championId
+                currentStat[props].summoner = accountName
               }
             }
             newStat = currentStat
           })
           // console.log(`new currentStat is ${newStat}`);
-        return newStat;
-      }).then((newStat) => {
-        // save new stat highscore to db
-        console.log(newStat, accountName);
+        resolve(newStat);
       })
     })
   })
-})('WthIsASummoner')
+}
+//---------------------- M A I N ----------------------------------// 
+accountId('WthIsASummoner').then(matchHistory).then(getHighScore).then(convertChampionId).then((result) => {
+  //save result to db
+  Stat.update({}, result, (err, data) => {
+    if(err){
+      console.log('pooped');
+    }
+    else{
+      console.log('saving to db');
+    }
+  })
+})
