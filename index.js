@@ -74,49 +74,50 @@ const matchStatConfig = {
   }
 }
 
-let matchStat = function(gameData) {
-    return new Promise((resolve, reject) => {
-      axios.get(`https://na1.api.riotgames.com/lol/match/v3/matches/${gameData.gameId}?api_key=${riotKey}`, matchStatConfig).then((data) => {
-        // find participant by matching championId
-        console.log(gameData);
-        let matchedData = data.data.participants.find((participant) => {
-            return participant.championId == gameData.championId;
-          })
-          // get relevant stats
-        let { kills, assists, deaths, totalDamageDealtToChampions, totalDamageTaken, longestTimeSpentLiving } = matchedData.stats;
-        let gameDuration = data.data.gameDuration;
-        // calculate damage per minute
-        let dpm = (function calcDPM(damage, seconds) {
-          let minutes = seconds / 60;
-          let dpm = damage / minutes;
-          // round to 2 digits
-          return dpm.toFixed(2);
-        })(totalDamageDealtToChampions, gameDuration);
-        // calculate KDA
-        let kda = ((kills + assists) / deaths).toFixed(2);
-        // stats passed for promise.all
-        resolve({ kills, assists, deaths, kda, totalDamageDealtToChampions, totalDamageTaken, longestTimeSpentLiving, dpm, championId: gameData.championId });
-      })
+function matchStat(gameData) {
+  return new Promise((resolve, reject) => {
+    axios.get(`https://na1.api.riotgames.com/lol/match/v3/matches/${gameData.gameId}?api_key=${riotKey}`, matchStatConfig).then((data) => {
+      // find participant by matching championId
+      console.log(gameData);
+      let matchedData = data.data.participants.find((participant) => {
+          return participant.championId == gameData.championId;
+        })
+        // get relevant stats
+      let { kills, assists, deaths, totalDamageDealtToChampions, totalDamageTaken, longestTimeSpentLiving } = matchedData.stats;
+      let gameDuration = data.data.gameDuration;
+      // calculate damage per minute
+      let dpm = (function calcDPM(damage, seconds) {
+        let minutes = seconds / 60;
+        let dpm = damage / minutes;
+        // round to 2 digits
+        return dpm.toFixed(2);
+      })(totalDamageDealtToChampions, gameDuration);
+      // calculate KDA
+      let kda = ((kills + assists) / deaths).toFixed(2);
+      // stats passed for promise.all
+      resolve({ kills, assists, deaths, kda, totalDamageDealtToChampions, totalDamageTaken, longestTimeSpentLiving, dpm, championId: gameData.championId });
     })
-  }
-  // matchStat({ gameId: '2523061524', championId: '238' });
+  })
+}
+// matchStat({ gameId: '2523061524', championId: '238' });
 
 function convertChampionId(stat) {
   // need error handling for when id is already converted
+  console.log('converting champ id');
   console.log(stat);
   stat = stat.toJSON(); // weird bug with mongoose objs, would otherwise output $__, isNew, and errors, as props
   function updateToName(props, id) {
-      return axios.get(`https://na1.api.riotgames.com/lol/static-data/v3/champions/${id}?locale=en_US&api_key=${riotKey}`).then((data) => {
-        console.log(stat[props].champion);
-        stat[props].champion = data.data.name;
-        return stat;
+    return axios.get(`https://na1.api.riotgames.com/lol/static-data/v3/champions/${id}?locale=en_US&api_key=${riotKey}`).then((data) => {
+      console.log(stat[props].champion);
+      stat[props].champion = data.data.name;
+      return stat;
     }).catch((err) => {
       console.log('already converted id to name'); // wont need this err handling when I add arr of gameid that are parsed already
     })
   }
   return new Promise((resolve, reject) => {
     let promiseArr = [];
-    for (props in stat){
+    for (props in stat) {
       promiseArr.push(updateToName(props, stat[props].champion))
     }
     Promise.all(promiseArr).then((updatedStat) => {
@@ -142,7 +143,7 @@ client.on('message', message => {
       Stat.find({}, { _id: 0, __v: 0 }, (err, stat) => {
         let msg = ``;
         stat = stat[0].toJSON();
-        for (props in stat){
+        for (props in stat) {
           console.log(props);
           msg += `\n **${props}**: ${stat[props].val} as ${stat[props].champion} by ${stat[props].summoner}`;
         }
@@ -173,7 +174,7 @@ db.once('open', () => {
 });
 
 //
-function getHighScore(gameId) {
+function getHighScore(gameId,accountName) {
   return new Promise((resolve, reject) => {
     Stat.find({}, { _id: 0, __v: 0 }, (err, stat) => {
       let currentStat = stat[0];
@@ -206,14 +207,19 @@ function getHighScore(gameId) {
   })
 }
 //---------------------- M A I N ----------------------------------// 
-accountId('WthIsASummoner').then(matchHistory).then(getHighScore).then(convertChampionId).then((result) => {
-  //save result to db
-  Stat.update({}, result, (err, data) => {
-    if(err){
-      console.log('pooped');
-    }
-    else{
-      console.log('saving to db');
-    }
+function main(accountName){
+  accountId(accountName).then(matchHistory).then((res) => {
+    console.log(accountName);
+    getHighScore(res, accountName).then(convertChampionId).then((result) => {
+    //save result to db
+    Stat.update({}, result, (err, data) => {
+      if (err) {
+        console.log('pooped');
+      } else {
+        console.log('saving to db');
+      }
+    })
   })
-})
+  })
+}
+main('WthIsASummoner');
