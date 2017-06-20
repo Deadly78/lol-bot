@@ -125,7 +125,7 @@ function getHighScore(gameId, accountName) {
                 currentStat.lowestDPM.summoner = accountName
               }
               // get lowest dmg dealt to champs
-              if (props !== 'championId' && props === 'totalDamageDealtToChampions' && stat[props] < currentStat.lowestDamageDealt.val){
+              if (props !== 'championId' && props === 'totalDamageDealtToChampions' && stat[props] < currentStat.lowestDamageDealt.val) {
                 currentStat.lowestDamageDealt.val = stat[props]
                 currentStat.lowestDamageDealt.champion = stat.championId
                 currentStat.lowestDamageDealt.summoner = accountName
@@ -189,7 +189,7 @@ client.on('message', message => {
         let msg = ``;
         stat = stat[0].toJSON();
         for (props in stat) {
-          msg += `\n **${props}**: ${stat[props].val} as ${stat[props].champion} by ${stat[props].summoner}`;
+          msg += `\n **${props}**: __${stat[props].val}__ as ${stat[props].champion} by ${stat[props].summoner}`;
         }
         message.reply(msg);
       })
@@ -223,19 +223,23 @@ db.once('open', () => {
 
 //---------------------- M A I N ----------------------------------// 
 function main(accountName) {
-  accountId(accountName).then(matchHistory).then((res) => {
-    console.log(accountName);
-    getHighScore(res, accountName).then(convertChampionId).then((result) => {
-      //save result to db
-      console.log(result);
-      Stat.update({}, result, (err, data) => {
-        if (err) {
-          console.log('pooped');
-        } else {
-          console.log('saving to db');
-        }
+  return new Promise((resolve, reject) => {
+    accountId(accountName).then(matchHistory).then((res) => {
+      console.log(accountName);
+      getHighScore(res, accountName).then(convertChampionId).then((result) => {
+        //save result to db
+        resolve(result);
+        Stat.update({}, result, (err, data) => {
+          if (err) {
+            console.log('pooped');
+          } else {
+            console.log('saving to db');
+          }
+        })
       })
     })
   })
 }
-main('WthIsASummoner')
+Promise.all([main('WthIsASummoner')]).then((res) => {
+  console.log(res);
+})
