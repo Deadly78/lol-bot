@@ -23,7 +23,9 @@ const StatSchema = new mongoose.Schema({
   dpm: { val: Number, champion: String, summoner: String },
   totalDamageTaken: { val: Number, champion: String, summoner: String },
   totalDamageDealtToChampions: { val: Number, champion: String, summoner: String },
-  longestTimeSpentLiving: { val: Number, champion: String, summoner: String }
+  longestTimeSpentLiving: { val: Number, champion: String, summoner: String },
+  lowestDamageDealt: { val: Number, champion: String, summoner: String },
+  lowestDPM: { val: Number, champion: String, summoner: String }
 })
 
 const Stat = mongoose.model('Stat', StatSchema)
@@ -100,7 +102,7 @@ function matchStat(gameData) {
   })
 }
 //
-function getHighScore(gameId,accountName) {
+function getHighScore(gameId, accountName) {
   return new Promise((resolve, reject) => {
     Stat.find({}, { _id: 0, __v: 0 }, (err, stat) => {
       let currentStat = stat[0];
@@ -116,8 +118,18 @@ function getHighScore(gameId,accountName) {
         res.forEach((stat) => {
             // iterate through each stat we're tracking, and find the highest for each
             for (let props in stat) {
-              console.log(props);
-              // console.log(`comparing ${stat[props]} and ${currentStat[props].val}`);
+              // get lowest dpm
+              if (props !== 'championId' && props === 'dpm' && stat[props] < currentStat.lowestDPM.val) {
+                currentStat.lowestDPM.val = stat[props]
+                currentStat.lowestDPM.champion = stat.championId
+                currentStat.lowestDPM.summoner = accountName
+              }
+              // get lowest dmg dealt to champs
+              if (props !== 'championId' && props === 'totalDamageDealtToChampions' && stat[props] < currentStat.lowestDamageDealt.val){
+                currentStat.lowestDamageDealt.val = stat[props]
+                currentStat.lowestDamageDealt.champion = stat.championId
+                currentStat.lowestDamageDealt.summoner = accountName
+              }
               if (props !== 'championId' && stat[props] > currentStat[props].val) {
                 // update val, champion, and summoner of new highest score
                 currentStat[props].val = stat[props]
@@ -133,17 +145,17 @@ function getHighScore(gameId,accountName) {
     })
   })
 }
+
 function convertChampionId(stat) {
   // need error handling for when id is already converted
   console.log('converting champ id');
   stat = stat.toJSON(); // weird bug with mongoose objs, would otherwise output $__, isNew, and errors, as props
-  console.log(stat);
   function updateToName(props, id) {
     return axios.get(`https://na1.api.riotgames.com/lol/static-data/v3/champions/${id}?locale=en_US&api_key=${riotKey}`).then((data) => {
       stat[props].champion = data.data.name;
       return stat;
     }).catch((err) => {
-      console.log(`convert champ id err ${err}`);
+      console.log(`err code ${err}`);
       return stat // wont need this err handling when I add arr of gameid that are parsed already
     })
   }
@@ -199,7 +211,9 @@ db.once('open', () => {
   //   dpm: { val: 0, champion: '', summoner: '' },
   //   totalDamageTaken: { val: 0, champion: '', summoner: '' },
   //   totalDamageDealtToChampions: { val: 0, champion: '', summoner: '' },
-  //   longestTimeSpentLiving: { val: 0, champion: '', summoner: '' }
+  //   longestTimeSpentLiving: { val: 0, champion: '', summoner: '' },
+  //   lowestDamageDealt: { val: 100000, champion: '', summoner: '' },
+  //   lowestDPM: { val: 100000, champion: '', summoner: '' }
   // }).save()
   server.listen(PORT, () => {
     console.log(`Listening on port ${PORT}`);
@@ -208,20 +222,20 @@ db.once('open', () => {
 
 
 //---------------------- M A I N ----------------------------------// 
-function main(accountName){
+function main(accountName) {
   accountId(accountName).then(matchHistory).then((res) => {
     console.log(accountName);
     getHighScore(res, accountName).then(convertChampionId).then((result) => {
-    //save result to db
-    console.log(result);
-    Stat.update({}, result, (err, data) => {
-      if (err) {
-        console.log('pooped');
-      } else {
-        console.log('saving to db');
-      }
+      //save result to db
+      console.log(result);
+      Stat.update({}, result, (err, data) => {
+        if (err) {
+          console.log('pooped');
+        } else {
+          console.log('saving to db');
+        }
+      })
     })
   })
-  })
 }
-main('WthIsASummoner');
+main('WthIsASummoner')
