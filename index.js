@@ -99,20 +99,52 @@ function matchStat(gameData) {
     })
   })
 }
-// matchStat({ gameId: '2523061524', championId: '238' });
-
+//
+function getHighScore(gameId,accountName) {
+  return new Promise((resolve, reject) => {
+    Stat.find({}, { _id: 0, __v: 0 }, (err, stat) => {
+      let currentStat = stat[0];
+      let arr = [];
+      for (let i = 0; i < 5; i++) {
+        arr.push(matchStat(gameId[i]));
+      }
+      // get matchStat for each gameId and updates current stats with any new highscores
+      Promise.all(arr).then((res) => {
+        console.log(res);
+        let newStat;
+        // iterate array of stat collection
+        res.forEach((stat) => {
+            // iterate through each stat we're tracking, and find the highest for each
+            for (let props in stat) {
+              console.log(props);
+              // console.log(`comparing ${stat[props]} and ${currentStat[props].val}`);
+              if (props !== 'championId' && stat[props] > currentStat[props].val) {
+                // update val, champion, and summoner of new highest score
+                currentStat[props].val = stat[props]
+                currentStat[props].champion = stat.championId
+                currentStat[props].summoner = accountName
+              }
+            }
+            newStat = currentStat
+          })
+          // console.log(`new currentStat is ${newStat}`);
+        resolve(newStat);
+      })
+    })
+  })
+}
 function convertChampionId(stat) {
   // need error handling for when id is already converted
   console.log('converting champ id');
-  console.log(stat);
   stat = stat.toJSON(); // weird bug with mongoose objs, would otherwise output $__, isNew, and errors, as props
+  console.log(stat);
   function updateToName(props, id) {
     return axios.get(`https://na1.api.riotgames.com/lol/static-data/v3/champions/${id}?locale=en_US&api_key=${riotKey}`).then((data) => {
-      console.log(stat[props].champion);
       stat[props].champion = data.data.name;
       return stat;
     }).catch((err) => {
-      console.log('already converted id to name'); // wont need this err handling when I add arr of gameid that are parsed already
+      console.log(`convert champ id err ${err}`);
+      return stat // wont need this err handling when I add arr of gameid that are parsed already
     })
   }
   return new Promise((resolve, reject) => {
@@ -121,6 +153,7 @@ function convertChampionId(stat) {
       promiseArr.push(updateToName(props, stat[props].champion))
     }
     Promise.all(promiseArr).then((updatedStat) => {
+      // console.log(updatedStat);
       resolve(updatedStat[0]); // each promise in the array is passed its result to .then, possible cleanup to code, but works as is
     })
   })
@@ -144,7 +177,6 @@ client.on('message', message => {
         let msg = ``;
         stat = stat[0].toJSON();
         for (props in stat) {
-          console.log(props);
           msg += `\n **${props}**: ${stat[props].val} as ${stat[props].champion} by ${stat[props].summoner}`;
         }
         message.reply(msg);
@@ -164,6 +196,7 @@ db.once('open', () => {
   //   deaths: { val: 0, champion: '', summoner: '' },
   //   assists: { val: 0, champion: '', summoner: '' },
   //   kda: { val: 0, champion: '', summoner: '' },
+  //   dpm: { val: 0, champion: '', summoner: '' },
   //   totalDamageTaken: { val: 0, champion: '', summoner: '' },
   //   totalDamageDealtToChampions: { val: 0, champion: '', summoner: '' },
   //   longestTimeSpentLiving: { val: 0, champion: '', summoner: '' }
@@ -173,45 +206,14 @@ db.once('open', () => {
   });
 });
 
-//
-function getHighScore(gameId,accountName) {
-  return new Promise((resolve, reject) => {
-    Stat.find({}, { _id: 0, __v: 0 }, (err, stat) => {
-      let currentStat = stat[0];
-      let arr = [];
-      for (let i = 0; i < 5; i++) {
-        arr.push(matchStat(gameId[i]));
-      }
-      // get matchStat for each gameId and updates current stats with any new highscores
-      Promise.all(arr).then((res) => {
-        console.log(res);
-        let newStat;
-        // iterate array of stat collection
-        res.forEach((stat) => {
-            // iterate through each stat we're tracking, and find the highest for each
-            for (let props in stat) {
-              // console.log(`comparing ${stat[props]} and ${currentStat[props].val}`);
-              if (props !== 'championId' && stat[props] > currentStat[props].val) {
-                // update val, champion, and summoner of new highest score
-                currentStat[props].val = stat[props]
-                currentStat[props].champion = stat.championId
-                currentStat[props].summoner = accountName
-              }
-            }
-            newStat = currentStat
-          })
-          // console.log(`new currentStat is ${newStat}`);
-        resolve(newStat);
-      })
-    })
-  })
-}
+
 //---------------------- M A I N ----------------------------------// 
 function main(accountName){
   accountId(accountName).then(matchHistory).then((res) => {
     console.log(accountName);
     getHighScore(res, accountName).then(convertChampionId).then((result) => {
     //save result to db
+    console.log(result);
     Stat.update({}, result, (err, data) => {
       if (err) {
         console.log('pooped');
