@@ -27,9 +27,13 @@ const StatSchema = new mongoose.Schema({
   lowestDamageDealt: { val: Number, champion: String, summoner: String },
   lowestDPM: { val: Number, champion: String, summoner: String }
 })
-
 const Stat = mongoose.model('Stat', StatSchema)
 
+const parsedGameSchema = new mongoose.Schema({
+  summoner: String,
+  gameId: [Number]
+})
+const ParsedGame = mongoose.model('ParsedGame', parsedGameSchema);
 
 // Need to chain 3 async calls, each call requires the result of the previous async call, therefore need to chain promises
 // order of async call: accountId -> matchHistory -> matchStats
@@ -40,12 +44,14 @@ function accountId(sumName) {
     axios.get(`https://na1.api.riotgames.com/lol/summoner/v3/summoners/by-name/${sumName}?api_key=${riotKey}`).then((data) => {
       console.log('fetching accID');
       resolve(data.data.accountId);
+    }).catch((err) => {
+      console.log(`cannot find summoner name`);
     })
   })
 }
 // search past 20 matches of accountID and return array of gameIds that were ARAM mode
-// store championId as a workaround to match stats of game to its proper player 
-function matchHistory(accountId) {
+// store championId as a workaround to match stats of game to its respective summoners
+function matchHistory(accountId, accountName) {
   return new Promise((resolve, reject) => {
     let aramGameId = [];
     axios.get(`https://na1.api.riotgames.com/lol/match/v3/matchlists/by-account/${accountId}/recent?api_key=${riotKey}`).then((data) => {
@@ -59,8 +65,35 @@ function matchHistory(accountId) {
             return game
           }
         })
-        // console.log(aramGameId);
-      resolve(aramGameId);
+        // check if documents exist, create one if it does not exist
+      let queryPromise = ParsedGame.count({ summoner: accountName }, (err, count) => {
+          // create new collection for new users
+          if (count > 0) {
+            console.log('DOC EXIST');
+          } else {
+            ParsedGame({
+              summoner: accountName,
+              gameId: []
+            }).save()
+          }
+        }).exec()
+        // update gameId with parsedIds to avoid reading the same match history twice
+      queryPromise.then(() => {
+        ParsedGame.findOne({ summoner: accountName }, (err, res) => {
+          // add new gameId to db
+          let parsedId = res.gameId;
+          aramGameId.forEach((game) => {
+            // remove oldest parsed game, only need 20 since match history length is 20
+            if (parsedId.length > 20) {
+              parsedId.pop();
+            }
+            parsedId.includes(game.gameId) ? '' : parsedId.push(game.gameId)
+          })
+          console.log(res);
+          res.save();
+          resolve(aramGameId);
+        })
+      })
     })
   })
 }
@@ -79,6 +112,7 @@ const matchStatConfig = {
 function matchStat(gameData) {
   return new Promise((resolve, reject) => {
     axios.get(`https://na1.api.riotgames.com/lol/match/v3/matches/${gameData.gameId}?api_key=${riotKey}`, matchStatConfig).then((data) => {
+      console.log('fetching match data');
       // find participant by matching championId
       console.log(gameData);
       let matchedData = data.data.participants.find((participant) => {
@@ -98,6 +132,8 @@ function matchStat(gameData) {
       let kda = ((kills + assists) / deaths).toFixed(2);
       // stats passed for promise.all
       resolve({ kills, assists, deaths, kda, totalDamageDealtToChampions, totalDamageTaken, longestTimeSpentLiving, dpm, championId: gameData.championId });
+    }).catch((err) => {
+      console.log(`error with fetching match stat ${err}`);
     })
   })
 }
@@ -110,6 +146,9 @@ function getHighScore(gameId, accountName) {
       for (let i = 0; i < 5; i++) {
         arr.push(matchStat(gameId[i]));
       }
+      // gameId.forEach((game) => {
+      //   arr.push(matchStat(game))
+      // })
       // get matchStat for each gameId and updates current stats with any new highscores
       Promise.all(arr).then((res) => {
         console.log(res);
@@ -141,6 +180,8 @@ function getHighScore(gameId, accountName) {
           })
           // console.log(`new currentStat is ${newStat}`);
         resolve(newStat);
+      }).catch((err) => {
+        console.log(`err in getting highscore ${err}`);
       })
     })
   })
@@ -188,15 +229,54 @@ client.on('message', message => {
       Stat.find({}, { _id: 0, __v: 0 }, (err, stat) => {
         let msg = ``;
         stat = stat[0].toJSON();
-        for (props in stat) {
-          msg += `\n **${props}**: __${stat[props].val}__ as ${stat[props].champion} by ${stat[props].summoner}`;
+        // change stat names to make it more readable
+        function changeStatNames(prop) {
+          switch (prop) {
+            case 'lowestDPM':
+              return 'Lowest DPM';
+              break;
+            case 'lowestDamageDealt':
+              return 'Lowest Damage Dealt';
+              break;
+            case 'longestTimeSpentLiving':
+              return 'Longest Time Alive';
+              break;
+            case 'totalDamageDealtToChampions':
+              return 'Highest Damage Dealt To Champions';
+              break;
+            case 'totalDamageTaken':
+              return 'Highest Damage Taken';
+              break;
+            case 'dpm':
+              return 'Highest DPM';
+              break;
+            case 'kda':
+              return 'Highest KDA';
+              break;
+            case 'assists':
+              return 'Most Assists';
+              break;
+            case 'deaths':
+              return 'Most Deaths';
+              break;
+            case 'kills':
+              return 'Most Kills';
+              break;
+            default:
+              return prop;
+              break;
+          }
         }
-        message.reply(msg);
+        // create message for each stat
+        for (props in stat) {
+          msg += `\n **${changeStatNames(props)}**: __${stat[props].val}__ as __${stat[props].champion}__ by __${stat[props].summoner}__\n`;
+        }
+        message.reply(msg); // send message to client
       })
   }
 });
 
-client.login(discordToken);
+client.login(discordToken); // register bot
 
 mongoose.connect("mongodb://lol:lol@ds127842.mlab.com:27842/lol-bot")
 const db = mongoose.connection;
@@ -215,6 +295,11 @@ db.once('open', () => {
   //   lowestDamageDealt: { val: 100000, champion: '', summoner: '' },
   //   lowestDPM: { val: 100000, champion: '', summoner: '' }
   // }).save()
+  // db.collections.parsedgames.drop();
+  // ParsedGame({
+  //   summoner:'WthIsASummoner',
+  //   gameId:[12345,5678]
+  // }).save()
   server.listen(PORT, () => {
     console.log(`Listening on port ${PORT}`);
   });
@@ -224,22 +309,25 @@ db.once('open', () => {
 //---------------------- M A I N ----------------------------------// 
 function main(accountName) {
   return new Promise((resolve, reject) => {
-    accountId(accountName).then(matchHistory).then((res) => {
-      console.log(accountName);
-      getHighScore(res, accountName).then(convertChampionId).then((result) => {
-        //save result to db
-        resolve(result);
-        Stat.update({}, result, (err, data) => {
-          if (err) {
-            console.log('pooped');
-          } else {
-            console.log('saving to db');
-          }
+    accountId(accountName).then((res) => {
+      matchHistory(res, accountName).then((res, err) => {
+        // need to do this so we can pass in accountName to getHighScore
+        getHighScore(res, accountName).then(convertChampionId).then((result) => {
+          //save result to db
+          resolve(result);
+          Stat.update({}, result, (err, data) => {
+            if (err) {
+              console.log('pooped');
+            } else {
+              console.log('saving to db');
+            }
+          })
         })
       })
     })
   })
 }
-Promise.all([main('WthIsASummoner')]).then((res) => {
+Promise.all([main('koreanism')]).then((res) => {
+  // compare final highscore of each summoner to find the overall highscore (todo when api key approved)
   console.log(res);
 })
